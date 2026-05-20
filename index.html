@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Bag Tænderne - NXT/Care</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      /* NXT/Care Colors */
+      --sky-100: #e0f2fe;
+      /* Variant 21 Color: The selected soft purple/blue */
+      --sky-500: #8bb1e9; 
+      
+      /* Physics */
+      --spring: 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+      
+      /* MASSIVE Target Sizes */
+      --btn-size: clamp(220px, 35vw, 450px);
+      /* Variant 21 Icon Scale: 1.6x the original size */
+      --icon-size: clamp(128px, 19.2vw, 256px); 
+    }
+
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, sans-serif; 
+      background: var(--sky-100); 
+    }
+    
+    #overlay { 
+      position: absolute; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      z-index: 1; 
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      background: var(--sky-100);
+    }
+    
+    /* Universal Play Icon SVG Styles */
+    .play-svg {
+      width: var(--icon-size);
+      height: var(--icon-size);
+      fill: currentColor;
+      margin-left: 10%; /* Optical centering for the play triangle */
+      transition: all var(--spring);
+    }
+
+    /* THE "LIQUID SKY PUDDLE" BUTTON */
+    .xr-btn {
+      position: relative;
+      cursor: pointer; 
+      outline: none; 
+      border: none;
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      text-decoration: none; 
+      user-select: none;
+      transition: all var(--spring);
+      
+      /* Specific Shape & Colors */
+      width: calc(var(--btn-size) * 1.2); 
+      height: calc(var(--btn-size) * 1.1);
+      border-radius: 60% 40% 40% 60% / 50% 60% 40% 50%;
+      background: var(--sky-100); 
+      color: var(--sky-500);
+      box-shadow: inset 15px 15px 30px #b9ddf5, inset -15px -15px 30px #ffffff;
+    }
+    
+    .xr-btn:hover { 
+      border-radius: 50%; 
+      transform: scale(1.05); 
+      background: var(--sky-500); 
+      color: var(--sky-100); 
+      box-shadow: 15px 15px 30px #b9ddf5, -15px -15px 30px #ffffff; 
+    }
+
+    .xr-btn:active {
+      transform: scale(0.95);
+    }
+
+    #toast {
+      position: fixed;
+      bottom: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--sky-500);
+      color: white;
+      padding: 16px 32px;
+      border-radius: 50px;
+      font-weight: 600;
+      font-size: 1.1rem;
+      box-shadow: 0 10px 25px rgba(139, 177, 233, 0.4);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+      z-index: 1000;
+      pointer-events: none;
+    }
+    
+    #toast.show {
+      bottom: 60px;
+    }
+
+    .webxr-hidden { display: none !important; }
+    
+    .exit-ar { 
+      position: fixed; 
+      top: 20px; 
+      right: 20px; 
+      background: rgba(255, 255, 255, 0.9); 
+      color: #333; 
+      border: none; 
+      border-radius: 50%; 
+      width: 50px; 
+      height: 50px; 
+      display: none; 
+      align-items: center; 
+      justify-content: center; 
+      font-size: 24px; 
+      cursor: pointer; 
+      z-index: 1000; 
+    }
+    
+    .xr-active .exit-ar { display: flex; }
+  </style>
+</head>
+<body>
+
+  <!-- SVG Defs -->
+  <svg width="0" height="0" style="position:absolute;">
+    <defs>
+      <g id="icon-play">
+        <path d="M8 5v14l11-7z" stroke-linejoin="round" stroke-linecap="round"/>
+      </g>
+    </defs>
+  </svg>
+
+  <div id="overlay">
+    <!-- Launch Button -->
+    <button class="xr-btn" id="start-button" aria-label="Start XR Experience">
+      <svg class="play-svg" viewBox="0 0 24 24">
+        <use href="#icon-play"></use>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Toast Notification for pitch feedback -->
+  <div id="toast">Starter XR Oplevelse!</div>
+
+  <button class="exit-ar" id="exit-ar">×</button>
+  <audio id="clean-sound" preload="auto"><source src="dead.mp3" type="audio/mpeg"></audio>
+  <audio id="cavity-sound" preload="auto"><source src="minecraft-glass-break.mp3" type="audio/mpeg"></audio>
+  <audio id="burp-sound" preload="auto"><source src="burp.mp3" type="audio/mpeg"></audio>
+  <audio id="background-music" preload="auto" loop><source src="music.mp3" type="audio/mpeg"></audio>
+  
+  <script type="module">
+    import * as THREE from 'three';
+    let camera, scene, renderer, xrSession = null;
+    let activeController, controllers = [], activeControllerIndex = 0;
+    let upperTeeth = [], lowerTeeth = [], teethOriginalPositions = [];
+    let upperGumLine, lowerGumLine, upperGumBaseY = 0, lowerGumBaseY = 0;
+    let upperGumPanel, lowerGumPanel;
+    let currentToothIndex = 0, currentRow = 'upper';
+    let cursorX = 0;
+    let bacteria = [], particles = [];
+    let clock = new THREE.Clock();
+    let isPlaying = false, gameStartTime = 0;
+    let lastControllerRotation = new THREE.Euler();
+    let isBurping = false, burpStartTime = 0, nextBurpTime = 0, hasHadFirstBurp = false;
+
+    // --- NXT/Care v1.3 Controller Select ---
+    let isControllerSelection = false, selectionStart = 0, ctrlHoldStart = {};
+    const SELECT_TIME = 4000, HOLD_TIME = 3000;
+
+    // --- NXT/Care v1.3 Clap to Close ---
+    let clapStart = 0;
+    const CLAP_DIST = 0.15, CLAP_TIME = 6000;
+    let clapHUD = null;
+
+    let score = 0, lastDisplayedScore = -1, lastDisplayedHigh = -1;
+    let highScore = parseInt(localStorage.getItem('dentalDefenseHighScore')) || 0;
+    let bacteriaSpawnInterval = 6.0, lastBacteriaSpawn = 0;
+    let bacteriaJumpInterval = 3.5;
+    let scorePanel, scoreText, highScoreText, selectionIndicator;
+    const INITIAL_SPAWN_INTERVAL = 6.0, MIN_SPAWN_INTERVAL = 1.2;
+    const INITIAL_JUMP_INTERVAL = 3.5, MIN_JUMP_INTERVAL = 1.5;
+    const DIFFICULTY_RAMP_TIME = 240;
+    const TOOTH_YELLOW_RATE = 0.04;
+
+    init();
+
+    function init() {
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0xf0f8ff, 0.05);
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.setClearColor(0x000000, 0);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      // NXT/Care v1.4 AR color fix: NoToneMapping in AR — compositor handles HDR, ACES blows highlights.
+      renderer.toneMapping = THREE.NoToneMapping;
+      document.body.appendChild(renderer.domElement);
+      document.getElementById('background-music').volume = 0.3;
+
+      // --- NXT/Care v1.4 AR Lighting baseline (reduced — passthrough adds real-world ambient) ---
+      scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      keyLight.position.set(1, 4, 2);
+      scene.add(keyLight);
+      const rimLight = new THREE.DirectionalLight(0x88aaff, 0.25);
+      rimLight.position.set(-2, 1, -1);
+      scene.add(rimLight);
+
+      document.getElementById('start-button').addEventListener('click', () => {
+        const toast = document.getElementById('toast');
+        toast.classList.add('show');
+        setTimeout(() => { toast.classList.remove('show'); }, 2000);
+        startARSession();
+      });
+      document.getElementById('exit-ar').addEventListener('click', endARSession);
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    }
+
+    async function startARSession() {
+      if (!navigator.xr) return;
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (supported) {
+          const session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body }
+          });
+          onSessionStarted(session);
+        }
+      } catch (e) { console.error('AR failed:', e); }
+    }
+
+    async function onSessionStarted(session) {
+      xrSession = session;
+      document.getElementById('start-button').style.display = 'none';
+      document.body.classList.add('xr-active');
+      document.getElementById('overlay').classList.add('webxr-hidden');
+      renderer.xr.setReferenceSpaceType('local');
+      renderer.xr.setSession(session);
+      createTeethAndGums();
+      create3DUI();
+      createSelectionIndicator();
+      setupController(session);
+      buildClapHUD();
+      scheduleNextBurp();
+      renderer.setAnimationLoop(render);
+      session.addEventListener('end', onSessionEnd);
+      startControllerSelection();
+    }
+
+    function createTeethAndGums() {
+      teethOriginalPositions = [];
+      const gumLineMat = new THREE.MeshBasicMaterial({ color: 0xff6f91, fog: false, toneMapped: false });
+      for (let row = 0; row < 2; row++) {
+        const isUpper = row === 0;
+        const yBase = isUpper ? 0.38 : -0.38;
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-0.6, yBase, -0.9), new THREE.Vector3(-0.4, yBase, -1.4),
+          new THREE.Vector3(0, yBase, -1.5), new THREE.Vector3(0.4, yBase, -1.4),
+          new THREE.Vector3(0.6, yBase, -0.9)
+        ]);
+        const gum = new THREE.Mesh(new THREE.TubeGeometry(curve, 30, 0.040, 12, false), gumLineMat.clone());
+        const capGeoSmall = new THREE.SphereGeometry(0.040, 12, 12);
+        const capL = new THREE.Mesh(capGeoSmall, gumLineMat); capL.position.set(-0.6, yBase, -0.9);
+        const capR = new THREE.Mesh(capGeoSmall, gumLineMat); capR.position.set(0.6, yBase, -0.9);
+        gum.add(capL, capR);
+        scene.add(gum);
+        if (isUpper) { upperGumLine = gum; upperGumBaseY = gum.position.y; }
+        else { lowerGumLine = gum; lowerGumBaseY = gum.position.y; }
+        for (let i = 0; i < 8; i++) {
+          const tooth = createTooth(isUpper ? i : i + 8, i);
+          const angle = (i - 3.5) * 0.4;
+          const radius = isUpper ? 0.6 : 0.65;
+          tooth.position.set(Math.sin(angle) * radius, isUpper ? 0.25 : -0.25, -1.2 - Math.cos(angle) * (isUpper ? 0.4 : 0.35));
+          tooth.rotation.y = -angle * 0.8;
+          scene.add(tooth);
+          (isUpper ? upperTeeth : lowerTeeth).push(tooth);
+          teethOriginalPositions.push({ pos: tooth.position.clone(), rot: tooth.rotation.clone() });
+        }
+      }
+    }
+
+    function createTooth(index, pos) {
+      const group = new THREE.Group();
+      let geometry;
+      if (pos === 0 || pos === 7) { geometry = new THREE.CapsuleGeometry(0.09, 0.18, 6, 12); geometry.scale(1.6, 1, 1.4); }
+      else if (pos === 1 || pos === 6) { geometry = new THREE.CapsuleGeometry(0.08, 0.18, 6, 10); geometry.scale(1.3, 1, 1.2); }
+      else if (pos === 2 || pos === 5) { geometry = new THREE.CapsuleGeometry(0.07, 0.18, 6, 10); geometry.scale(1.1, 1, 1.1); }
+      else {
+        geometry = new THREE.CapsuleGeometry(0.06, 0.18, 6, 12); geometry.scale(1.8, 1, 1);
+        const v = geometry.attributes.position.array;
+        for (let i = 0; i < v.length; i += 3) if (v[i + 2] > 0) v[i + 2] *= 0.8;
+        geometry.computeVertexNormals();
+      }
+      const material = new THREE.MeshPhysicalMaterial({ color: 0xfff8dc, roughness: 0.3, clearcoat: 0.8 });
+      const tooth = new THREE.Mesh(geometry, material);
+      group.add(tooth);
+      group.userData = { toothIndex: index, hasBacteria: false, yellowness: 0 };
+      return group;
+    }
+
+    function createSelectionIndicator() {
+      selectionIndicator = new THREE.Mesh(
+        new THREE.RingGeometry(0.12, 0.15, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.7 })
+      );
+      scene.add(selectionIndicator);
+    }
+
+    function scheduleNextBurp() {
+      if (!hasHadFirstBurp) nextBurpTime = gameStartTime + 20;
+      else nextBurpTime = clock.getElapsedTime() + 45 + Math.random() * 30;
+    }
+
+    function triggerBurp() {
+      if (isBurping) return;
+      isBurping = true; burpStartTime = clock.getElapsedTime(); hasHadFirstBurp = true;
+      const snd = document.getElementById('burp-sound');
+      snd.currentTime = 0; snd.volume = 0.8; snd.play().catch(()=>{});
+      const colors = [0x00ff00, 0x66ff33, 0x33cc00, 0x99ff66];
+      for (let i = 0; i < 20; i++) {
+        const vapor = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03 + Math.random() * 0.02, 8, 8),
+          new THREE.MeshBasicMaterial({ color: colors[Math.floor(Math.random() * colors.length)], transparent: true })
+        );
+        const startX = (Math.random() - 0.5) * 0.8, startY = (Math.random() - 0.5) * 0.3;
+        vapor.position.set(startX, startY, -1.0 - Math.random() * 0.3);
+        scene.add(vapor);
+        particles.push({
+          mesh: vapor, type: 'vapor',
+          vel: new THREE.Vector3((Math.random() - 0.5) * 0.04 + startX * 0.02, (Math.random() - 0.5) * 0.04 + startY * 0.02, 0.02 + Math.random() * 0.03),
+          life: 2.5 + Math.random(), age: -i * 0.05
+        });
+      }
+      setTimeout(() => { isBurping = false; scheduleNextBurp(); }, 1500);
+    }
+
+    function updateBurpAnimation() {
+      if (!isBurping) return;
+      const progress = (clock.getElapsedTime() - burpStartTime) / 1.5;
+      if (progress > 1) {
+        upperTeeth.concat(lowerTeeth).forEach((t, i) => { t.position.copy(teethOriginalPositions[i].pos); t.rotation.copy(teethOriginalPositions[i].rot); });
+        if (upperGumLine) upperGumLine.position.y = upperGumBaseY;
+        if (lowerGumLine) lowerGumLine.position.y = lowerGumBaseY;
+        if (upperGumPanel) upperGumPanel.position.y = 0;
+        if (lowerGumPanel) lowerGumPanel.position.y = 0;
+        if (scorePanel) scorePanel.position.y = 0.5;
+        if (highScoreText) highScoreText.position.y = -0.5;
+        return;
+      }
+      const wave = Math.sin(progress * Math.PI * 6) * Math.sin(progress * Math.PI) * 0.15;
+      const vert = Math.sin(progress * Math.PI * 12) * 0.08;
+      upperTeeth.forEach((t, i) => {
+        const orig = teethOriginalPositions[i];
+        t.position.set(orig.pos.x + wave * 0.5, orig.pos.y + wave + vert, orig.pos.z);
+        t.rotation.z = orig.rot.z + wave * 0.3;
+      });
+      lowerTeeth.forEach((t, i) => {
+        const orig = teethOriginalPositions[i + 8];
+        t.position.set(orig.pos.x + wave * 0.5, orig.pos.y - wave - vert, orig.pos.z);
+        t.rotation.z = orig.rot.z - wave * 0.3;
+      });
+      const dY_upper = (wave + vert) * 0.6;
+      const dY_lower = (-wave - vert) * 0.6;
+      if (upperGumLine) upperGumLine.position.y = upperGumBaseY + dY_upper;
+      if (lowerGumLine) lowerGumLine.position.y = lowerGumBaseY + dY_lower;
+      if (upperGumPanel) upperGumPanel.position.y = dY_upper;
+      if (lowerGumPanel) lowerGumPanel.position.y = dY_lower;
+      if (scorePanel) scorePanel.position.y = 0.5 + dY_upper;
+      if (highScoreText) highScoreText.position.y = -0.5 + dY_lower;
+    }
+
+    function createBacterium() {
+      const isUpper = Math.random() > 0.5;
+      const teeth = isUpper ? upperTeeth : lowerTeeth;
+      let targetTooth = teeth[Math.floor(Math.random() * teeth.length)];
+      if (bacteria.filter(b => b.userData.currentTooth === targetTooth).length >= 3) {
+         let found = teeth.find(t => bacteria.filter(b => b.userData.currentTooth === t).length < 3);
+         if (!found) return;
+         targetTooth = found;
+      }
+      const grp = new THREE.Group();
+      grp.add(new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), new THREE.MeshPhysicalMaterial({ color: 0x000000, roughness: 0.9 })));
+      const addEye = (x) => {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 8), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        eye.position.set(x, 0.02, 0.03); pupil.position.set(x, 0.02, 0.04);
+        grp.add(eye); grp.add(pupil); return { eye, pupil };
+      };
+      const l = addEye(-0.02), r = addEye(0.02);
+      const offsetPos = [{x:0,y:0}, {x:0.06,y:0}, {x:-0.06,y:0}][bacteria.filter(b => b.userData.currentTooth === targetTooth).length] || {x:0,y:0};
+      grp.position.set(targetTooth.position.x + offsetPos.x, targetTooth.position.y + offsetPos.y, targetTooth.position.z + 0.08);
+      grp.userData = {
+        currentTooth: targetTooth, row: isUpper ? 'upper' : 'lower', time: 0, jumpTimer: 0,
+        lPupil: l.pupil, rPupil: r.pupil, lCenter: l.eye.position.clone(), rCenter: r.eye.position.clone(),
+        pTimer: Math.random() * Math.PI * 2, offset: offsetPos
+      };
+      scene.add(grp);
+      bacteria.push(grp);
+      targetTooth.userData.hasBacteria = true;
+    }
+
+    function disposeObject(o) {
+      o.traverse(c => { if(c.geometry) c.geometry.dispose(); if(c.material) c.material.dispose(); });
+    }
+
+    function cleanTooth() {
+      const currentTooth = (currentRow === 'upper' ? upperTeeth : lowerTeeth)[currentToothIndex];
+      if (!currentTooth) return;
+      const idx = bacteria.findIndex(b => b.userData.currentTooth === currentTooth);
+      if (idx !== -1) {
+        const b = bacteria[idx];
+        scene.remove(b); disposeObject(b);
+        bacteria.splice(idx, 1);
+        const snd = document.getElementById('clean-sound');
+        snd.currentTime = 0; snd.play().catch(()=>{});
+        score += 10;
+        currentTooth.userData.hasBacteria = false;
+        currentTooth.userData.yellowness = 0;
+        const tm = currentTooth.children[0];
+        if (tm && tm.material) {
+          tm.material.color.set(0xffffff); tm.material.emissive.set(0x88ff88); tm.material.emissiveIntensity = 0.5;
+          setTimeout(() => { tm.material.emissiveIntensity = 0; tm.material.color.set(0xfff8dc); }, 500);
+        }
+        for (let i = 0; i < 10; i++) {
+          const spark = new THREE.Mesh(new THREE.SphereGeometry(0.01, 8, 8), new THREE.MeshBasicMaterial({ color: 0x88ff88, transparent: true }));
+          spark.position.copy(currentTooth.position);
+          scene.add(spark);
+          particles.push({
+            mesh: spark, type: 'sparkle', life: 1, age: 0,
+            vel: new THREE.Vector3((Math.random() - 0.5) * 0.02, Math.random() * 0.02, (Math.random() - 0.5) * 0.02)
+          });
+        }
+      } else {
+        const snd = document.getElementById('cavity-sound');
+        snd.currentTime = 0; snd.volume = 0.3; snd.play().catch(()=>{});
+      }
+    }
+
+    function setupController(session) {
+      controllers = [];
+      for (let i = 0; i < 2; i++) {
+        const controller = renderer.xr.getController(i);
+        controller.addEventListener('selectstart', () => {
+          if (isPlaying && !isControllerSelection && i === activeControllerIndex) cleanTooth();
+        });
+        scene.add(controller);
+        const cg = new THREE.Group();
+        cg.add(new THREE.Mesh(new THREE.SphereGeometry(0.03), new THREE.MeshPhysicalMaterial({color:0xffffff})));
+        cg.add(new THREE.PointLight(0xffffff, 1.5, 0.3));
+        controller.add(cg);
+        controllers.push(controller);
+      }
+    }
+
+    // --- NXT/Care v1.3 Controller Select: 4s window, 3s hold, highest visible ---
+    function startControllerSelection() {
+      isControllerSelection = true;
+      selectionStart = clock.getElapsedTime();
+      ctrlHoldStart = {};
+    }
+
+    function processControllerSelection() {
+      if (!isControllerSelection) return;
+      const elapsed = (clock.getElapsedTime() - selectionStart) * 1000;
+      let bestY = -Infinity, bestIdx = -1;
+      controllers.forEach((c, i) => {
+        if (c.visible && c.position.lengthSq() > 0 && c.position.y > bestY) {
+          bestY = c.position.y; bestIdx = i;
+        }
+      });
+      if (bestIdx >= 0) {
+        const c = controllers[bestIdx];
+        const inFront = c.position.z > -0.8 && c.position.z < -0.3 && Math.abs(c.position.x) < 0.3;
+        if (inFront) {
+          if (!ctrlHoldStart[bestIdx]) ctrlHoldStart[bestIdx] = clock.getElapsedTime();
+          if ((clock.getElapsedTime() - ctrlHoldStart[bestIdx]) * 1000 >= HOLD_TIME) {
+            return confirmController(bestIdx);
+          }
+        } else ctrlHoldStart[bestIdx] = null;
+        Object.keys(ctrlHoldStart).forEach(k => { if (+k !== bestIdx) ctrlHoldStart[k] = null; });
+      }
+      if (elapsed > SELECT_TIME) confirmController(Math.max(0, bestIdx));
+    }
+
+    function confirmController(idx) {
+      isControllerSelection = false;
+      activeController = controllers[idx];
+      activeControllerIndex = idx;
+      triggerConfetti(activeController);
+      document.getElementById('background-music').play().catch(()=>{});
+      isPlaying = true;
+      gameStartTime = clock.getElapsedTime();
+      score = 0; lastDisplayedScore = -1;
+      bacteriaSpawnInterval = INITIAL_SPAWN_INTERVAL;
+      bacteriaJumpInterval = INITIAL_JUMP_INTERVAL;
+      lastBacteriaSpawn = clock.getElapsedTime();
+    }
+
+    function triggerConfetti(controller) {
+      const colors = [0x0ea5e9, 0xbae6fd, 0xfde68a, 0xbbf7d0, 0xf472b6, 0xffffff];
+      const origin = new THREE.Vector3();
+      controller.getWorldPosition(origin);
+      for (let i = 0; i < 40; i++) {
+        const c = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.02, 0.02),
+          new THREE.MeshBasicMaterial({ color: colors[i % colors.length], side: THREE.DoubleSide, transparent: true })
+        );
+        c.position.copy(origin);
+        c.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+        scene.add(c);
+        particles.push({
+          mesh: c, type: 'sparkle', life: 1.6, age: 0,
+          vel: new THREE.Vector3((Math.random()-0.5)*0.06, Math.random()*0.06+0.02, (Math.random()-0.5)*0.06)
+        });
+      }
+    }
+
+    // --- NXT/Care v1.3 Clap to Close: 6s hold, 15cm, origin failsafe ---
+    function checkClap() {
+      if (controllers.length < 2) { clapStart = 0; return; }
+      const c1 = controllers[0], c2 = controllers[1];
+      if (c1.position.lengthSq() === 0 && c2.position.lengthSq() === 0) { clapStart = 0; return; }
+      if (c1.position.distanceTo(c2.position) <= CLAP_DIST) {
+        if (!clapStart) clapStart = Date.now();
+        else if (Date.now() - clapStart >= CLAP_TIME) { endARSession(); clapStart = 0; }
+      } else clapStart = 0;
+    }
+
+    // --- NXT/Care v1.3 White-glass HUD ---
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function buildClapHUD() {
+      clapHUD = new THREE.Group();
+      // NXT/Care v1.4: pulled forward from -1.8 to -0.7 so it sits in FRONT of teeth (z≈-1.2).
+      clapHUD.position.set(0, 0, -0.7);
+      const c = document.createElement('canvas');
+      c.width = 1024; c.height = 220;
+      const tex = new THREE.CanvasTexture(c);
+      tex.encoding = THREE.sRGBEncoding;
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.6, 0.129),
+        // depthTest/Write off + renderOrder high = guaranteed-on-top overlay, regardless of geometry overlap.
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false })
+      );
+      mesh.renderOrder = 999;
+      clapHUD.add(mesh);
+      clapHUD.userData = { canvas: c, ctx: c.getContext('2d'), tex };
+      clapHUD.visible = false;
+      camera.add(clapHUD);
+      scene.add(camera);
+    }
+
+    function drawClapHUD() {
+      if (!clapHUD) return;
+      clapHUD.visible = clapStart > 0;
+      if (!clapHUD.visible) return;
+      const { canvas, ctx, tex } = clapHUD.userData;
+      const W = 1024, H = 220, R = 110;
+      ctx.clearRect(0, 0, W, H);
+      ctx.shadowColor = 'rgba(14,165,233,0.22)';
+      ctx.shadowBlur = 28; ctx.shadowOffsetY = 10;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      roundRect(ctx, 12, 8, W - 24, H - 24, R); ctx.fill();
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
+      roundRect(ctx, 13, 9, W - 26, H - 26, R - 1); ctx.stroke();
+      const prog = Math.min(1, (Date.now() - clapStart) / CLAP_TIME);
+      const remain = Math.max(0, Math.ceil((CLAP_TIME - (Date.now() - clapStart)) / 1000));
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '800 52px -apple-system, "SF Pro Rounded", "Segoe UI", Helvetica, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(`👏 Hold sammen i ${remain}s for at lukke`, W / 2, 78);
+      const bx = 64, by = 142, bw = W - 128, bh = 36, br = 18;
+      ctx.fillStyle = 'rgba(14,165,233,0.12)';
+      roundRect(ctx, bx, by, bw, bh, br); ctx.fill();
+      if (prog > 0) {
+        const grad = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+        grad.addColorStop(0, '#bae6fd'); grad.addColorStop(1, '#0ea5e9');
+        ctx.fillStyle = grad;
+        roundRect(ctx, bx, by, Math.max(br * 2, Math.round(bw * prog)), bh, br); ctx.fill();
+      }
+      tex.needsUpdate = true;
+    }
+
+    function endARSession() { if (xrSession) xrSession.end(); }
+
+    function onSessionEnd() {
+      isPlaying = isControllerSelection = isBurping = false;
+      document.getElementById('background-music').pause();
+      document.body.classList.remove('xr-active');
+      document.getElementById('overlay').classList.remove('webxr-hidden');
+      document.getElementById('start-button').style.display = 'flex';
+      upperTeeth.concat(lowerTeeth).forEach(t => { scene.remove(t); disposeObject(t); });
+      bacteria.forEach(b => { scene.remove(b); disposeObject(b); });
+      particles.forEach(p => { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); });
+      [upperGumLine, lowerGumLine, upperGumPanel, lowerGumPanel, scorePanel, highScoreText, selectionIndicator, clapHUD].forEach(o => { if(o) { if(o.parent) o.parent.remove(o); } });
+      upperTeeth = []; lowerTeeth = []; bacteria = []; particles = [];
+      clapStart = 0; clapHUD = null;
+      renderer.setAnimationLoop(null); xrSession = null;
+    }
+
+    function resetGameAfterLoss() {
+      bacteria.forEach(b => { scene.remove(b); disposeObject(b); });
+      bacteria = [];
+      upperTeeth.concat(lowerTeeth).forEach(t => {
+        t.userData.hasBacteria = false; t.userData.yellowness = 0;
+        if (t.children[0] && t.children[0].material) {
+          t.children[0].material.color.setHex(0xfff8dc);
+          t.children[0].material.emissiveIntensity = 0;
+        }
+      });
+      particles.forEach(p => { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); });
+      particles = [];
+      score = 0; lastDisplayedScore = -1;
+      bacteriaSpawnInterval = INITIAL_SPAWN_INTERVAL;
+      bacteriaJumpInterval = INITIAL_JUMP_INTERVAL;
+      gameStartTime = clock.getElapsedTime();
+      lastBacteriaSpawn = clock.getElapsedTime();
+    }
+
+    function createTextTexture(text, size = 56, col = '#fff', bg = 'rgba(255,111,145,0.0)') {
+      const c = document.createElement('canvas'), ctx = c.getContext('2d');
+      c.width = 512; c.height = 128;
+      ctx.fillStyle = bg; ctx.fillRect(0,0,c.width,c.height);
+      ctx.fillStyle = col;
+      ctx.font = `bold ${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",Arial`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 8;
+      ctx.fillText(text, c.width/2, c.height/2);
+      const tex = new THREE.CanvasTexture(c);
+      tex.encoding = THREE.sRGBEncoding; // NXT/Care v1.4: canvas content is sRGB, declare it.
+      return tex;
+    }
+
+    function buildGumPanelCurve(yBase) {
+      return new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.6, yBase, -0.9),
+        new THREE.Vector3(-0.4, yBase, -1.4),
+        new THREE.Vector3(0, yBase, -1.5),
+        new THREE.Vector3(0.4, yBase, -1.4),
+        new THREE.Vector3(0.6, yBase, -0.9)
+      ]);
+    }
+
+    function createCurvedPlane(width, height) {
+      const geo = new THREE.PlaneGeometry(width, height, 16, 1);
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const dz = x * x * 0.625;
+        pos.setXYZ(i, x, pos.getY(i), dz);
+      }
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    function create3DUI() {
+      const gumMat = new THREE.MeshPhysicalMaterial({ color: 0xff6f91, roughness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.6, fog: false });
+      const upperCurve = buildGumPanelCurve(0.50);
+      upperGumPanel = new THREE.Mesh(new THREE.TubeGeometry(upperCurve, 40, 0.12, 16, false), gumMat.clone());
+      const capGeo = new THREE.SphereGeometry(0.12, 16, 16);
+      const upperCapL = new THREE.Mesh(capGeo, gumMat); upperCapL.position.set(-0.6, 0.50, -0.9);
+      const upperCapR = new THREE.Mesh(capGeo, gumMat); upperCapR.position.set(0.6, 0.50, -0.9);
+      upperGumPanel.add(upperCapL, upperCapR);
+      scene.add(upperGumPanel);
+      const lowerCurve = buildGumPanelCurve(-0.50);
+      lowerGumPanel = new THREE.Mesh(new THREE.TubeGeometry(lowerCurve, 40, 0.12, 16, false), gumMat.clone());
+      const lowerCapL = new THREE.Mesh(capGeo, gumMat); lowerCapL.position.set(-0.6, -0.50, -0.9);
+      const lowerCapR = new THREE.Mesh(capGeo, gumMat); lowerCapR.position.set(0.6, -0.50, -0.9);
+      lowerGumPanel.add(lowerCapL, lowerCapR);
+      scene.add(lowerGumPanel);
+      scorePanel = new THREE.Group();
+      scorePanel.position.set(0, 0.5, -1.5);
+      scoreText = new THREE.Mesh(
+        createCurvedPlane(0.9, 0.25),
+        new THREE.MeshBasicMaterial({ map: createTextTexture('🪥 0', 56, '#ffffff'), transparent: true, side: THREE.DoubleSide, toneMapped: false })
+      );
+      scoreText.position.z = 0.13;
+      scorePanel.add(scoreText);
+      scene.add(scorePanel);
+      highScoreText = new THREE.Mesh(
+        createCurvedPlane(0.9, 0.25),
+        new THREE.MeshBasicMaterial({ map: createTextTexture(`🏆 ${highScore}`, 56, '#ffe680'), transparent: true, side: THREE.DoubleSide, toneMapped: false })
+      );
+      highScoreText.position.set(0, -0.5, -1.37);
+      scene.add(highScoreText);
+      lastDisplayedHigh = highScore;
+    }
+
+    function refreshScoreText() {
+      if (scoreText.material.map) scoreText.material.map.dispose();
+      scoreText.material.map = createTextTexture(`🪥 ${score}`, 56, '#ffffff');
+    }
+
+    function refreshHighScoreText() {
+      if (highScoreText.material.map) highScoreText.material.map.dispose();
+      highScoreText.material.map = createTextTexture(`🏆 ${highScore}`, 56, '#ffe680');
+    }
+
+    function render(time, frame) {
+      const dt = Math.min(clock.getDelta(), 1/30);
+      if (!frame) return renderer.render(scene, camera);
+
+      // NXT/Care v1.3: clap-to-close every frame, with HUD
+      checkClap();
+      drawClapHUD();
+
+      if (isControllerSelection) processControllerSelection();
+
+      if (isPlaying && !isControllerSelection) {
+        const gameTime = clock.getElapsedTime() - gameStartTime;
+        const diff = Math.min(gameTime / DIFFICULTY_RAMP_TIME, 1);
+        bacteriaSpawnInterval = INITIAL_SPAWN_INTERVAL + (MIN_SPAWN_INTERVAL - INITIAL_SPAWN_INTERVAL) * diff;
+        bacteriaJumpInterval = INITIAL_JUMP_INTERVAL + (MIN_JUMP_INTERVAL - INITIAL_JUMP_INTERVAL) * diff;
+
+        if (activeController) {
+          const rot = new THREE.Euler().setFromQuaternion(activeController.quaternion);
+          // VELOCITY TWIST — roll delta drives an analog cursor across the 8-tooth arc.
+          // Twist to accelerate, hold steady to stop, twist back to return.
+          const HALF_W = 0.6;     // cursor x bound (matches outermost tooth x)
+          const GAIN   = 0.5;     // twist sensitivity. 0.3 = calmer, 0.7 = punchier.
+          const dz = rot.z - lastControllerRotation.z;
+          cursorX = Math.max(-HALF_W, Math.min(HALF_W, cursorX + dz * GAIN));
+          // map continuous cursor → tooth index 0..7 (no row-wrap; row is its own axis now)
+          currentToothIndex = Math.max(0, Math.min(7,
+            Math.round((cursorX + HALF_W) / (HALF_W * 2) * 7)));
+          // HAND HEIGHT — controller Y relative to the headset picks the row.
+          // Hand at rest / a bit below head = lower row, raise hand = upper row.
+          const headY = renderer.xr.getCamera().position.y;
+          const ROW_OFFSET = -0.15; // controller this far below head = boundary. Raise to make 'upper' easier.
+          currentRow = activeController.position.y > (headY + ROW_OFFSET) ? 'upper' : 'lower';
+          lastControllerRotation.copy(rot);
+        }
+
+        const ct = (currentRow === 'upper' ? upperTeeth : lowerTeeth)[currentToothIndex];
+        if (ct && selectionIndicator) {
+          selectionIndicator.position.copy(ct.position); selectionIndicator.position.z += 0.1;
+          const s = 1 + Math.sin(time * 0.005) * 0.1; selectionIndicator.scale.set(s, s, s);
+        }
+
+        if (score !== lastDisplayedScore) {
+          refreshScoreText();
+          lastDisplayedScore = score;
+          if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('dentalDefenseHighScore', highScore);
+          }
+        }
+        if (highScore !== lastDisplayedHigh) { refreshHighScoreText(); lastDisplayedHigh = highScore; }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+          let p = particles[i]; p.age += dt;
+          if (p.age < 0) continue;
+          if (p.age > p.life) {
+            scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose();
+            particles.splice(i, 1);
+          } else {
+            p.mesh.position.add(p.vel);
+            if (p.type === 'vapor') {
+              p.mesh.scale.setScalar(1 + p.age * 0.8);
+              p.mesh.material.opacity = (1 - p.age / p.life) * 0.8;
+              p.vel.multiplyScalar(0.98);
+            } else {
+              p.mesh.material.opacity = 1 - (p.age / p.life);
+              p.mesh.scale.setScalar(1 - p.age * 0.5);
+              p.vel.y -= 0.001;
+            }
+          }
+        }
+
+        bacteria.forEach(b => {
+          b.userData.time += dt; b.userData.jumpTimer += dt; b.userData.pTimer += dt * 2;
+          b.position.y = b.userData.currentTooth.position.y + b.userData.offset.y + Math.abs(Math.sin(time * 0.003)) * 0.05;
+          b.userData.lPupil.position.set(b.userData.lCenter.x + Math.sin(b.userData.pTimer)*0.006, b.userData.lCenter.y + Math.cos(b.userData.pTimer*1.3)*0.006, b.userData.lPupil.position.z);
+          b.userData.rPupil.position.set(b.userData.rCenter.x + Math.sin(b.userData.pTimer*0.8)*0.006, b.userData.rCenter.y + Math.cos(b.userData.pTimer*1.1)*0.006, b.userData.rPupil.position.z);
+          if (b.userData.jumpTimer > bacteriaJumpInterval) {
+            b.userData.jumpTimer = 0;
+            const teeth = b.userData.row === 'upper' ? upperTeeth : lowerTeeth;
+            let target = teeth[Math.floor(Math.random() * teeth.length)];
+            if (bacteria.filter(x => x.userData.currentTooth === target && x !== b).length < 3) {
+              b.userData.currentTooth.userData.hasBacteria = false;
+              b.userData.currentTooth = target; target.userData.hasBacteria = true;
+              b.userData.offset = [{x:0,y:0}, {x:0.06,y:0}, {x:-0.06,y:0}][bacteria.filter(x => x.userData.currentTooth === target && x !== b).length] || {x:0,y:0};
+              b.position.set(target.position.x + b.userData.offset.x, target.position.y + b.userData.offset.y, target.position.z + 0.08);
+            }
+          }
+          if (b.userData.time > 3.0) {
+            const tooth = b.userData.currentTooth;
+            tooth.userData.yellowness = Math.min(1, tooth.userData.yellowness + dt * TOOTH_YELLOW_RATE);
+            const y = tooth.userData.yellowness * 0.5;
+            if (tooth.children[0].material) tooth.children[0].material.color.setRGB(1 - y, 1 - y, 0.8 - y);
+          }
+        });
+
+        const allTeeth = upperTeeth.concat(lowerTeeth);
+        if (allTeeth.length === 16 && allTeeth.every(t => t.userData.yellowness >= 1)) {
+          resetGameAfterLoss();
+        }
+
+        if (!isBurping && clock.getElapsedTime() >= nextBurpTime) triggerBurp();
+        if (isBurping) updateBurpAnimation();
+        if (clock.getElapsedTime() - lastBacteriaSpawn > bacteriaSpawnInterval) {
+          createBacterium(); lastBacteriaSpawn = clock.getElapsedTime();
+        }
+      }
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
